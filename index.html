@@ -33,6 +33,7 @@
   input[type=number]{width:70px;padding:6px;border-radius:8px;border:1px solid var(--line);background:#2a241d;color:var(--txt);font:inherit}
   #cross{position:absolute;left:50%;top:50%;width:28px;height:28px;margin:-14px 0 0 -14px;border:2px solid #fff;border-radius:50%;display:none;pointer-events:none;box-shadow:0 0 0 1px rgba(0,0,0,.5)}
   #cross::after{content:"";position:absolute;left:50%;top:50%;width:4px;height:4px;margin:-2px;background:#fff;border-radius:50%}
+  .lb.on{background:var(--acc);color:#1a1206;border-color:var(--acc);font-weight:700}
   #btnExit,#btnLock{display:none}
   .xr,.xr body,.xr #app,.xr #stage{background:transparent!important}
   .xr #bg,.xr #vid{display:none!important}
@@ -75,7 +76,8 @@
 
     <div class="row"><label for="diam">Toplam çap</label><input id="diam" type="range" min="80" max="170" step="1" value="130"><output id="diamO">130 cm</output></div>
     <div class="row"><label for="drop">Zincir boyu</label><input id="drop" type="range" min="25" max="120" step="1" value="50"><output id="dropO">50 cm</output></div>
-    <div class="btns"><button class="btn" id="btnLight">Işık: Kapalı</button><button class="btn pri" id="btnLock">Sabitle</button><button class="btn" id="btnExit">AR'dan çık</button></div>
+    <div class="btns" id="lightBtns"><button class="btn lb on" data-l="off">Işık kapalı</button><button class="btn lb" data-l="warm">Sarı</button><button class="btn lb" data-l="neutral">Günışığı</button><button class="btn lb" data-l="cool">Beyaz</button></div>
+    <div class="btns"><button class="btn pri" id="btnLock">Sabitle</button><button class="btn" id="btnExit">AR'dan çık</button></div>
     <div class="note">Bu demodaki avize, gönderdiğin render görsellerine bakılarak yaklaşık ölçülerle kurulmuş örnek bir modeldir. Gerçek 3D dosyası gelince birebir değişir.</div>
   </div>
 </div>
@@ -149,13 +151,24 @@
     applyScale();
   }
   function applyScale(){if(chand)chand.scale.setScalar(parseFloat($('diam').value)/FULL);}
-  function setLight(on){
-    lightOn=on;
-    matGlow.color.set(on?0xffe2ae:0x6b6458);
-    matBulb.color.set(on?0xfff0cf:0x7a7264);
-    warm.intensity=on?1.7:0;
-    $('btnLight').textContent='Işık: '+(on?'Açık':'Kapalı');
-    glow.style.opacity=on?1:0;
+  var LIGHTS={
+    warm:   {glow:0xffc27a,bulb:0xffe2b8,pt:0xffb870,halo:'255,170,90'},   // sarı ~3000K
+    neutral:{glow:0xffe0b8,bulb:0xfff1de,pt:0xffd9ae,halo:'255,214,166'},  // günışığı ~4000K
+    cool:   {glow:0xf4f8ff,bulb:0xffffff,pt:0xeaf2ff,halo:'225,236,255'}   // beyaz ~6500K
+  };
+  function setLight(mode){
+    lightOn=(mode!=='off');
+    if(lightOn){
+      var L=LIGHTS[mode];
+      matGlow.color.set(L.glow);matBulb.color.set(L.bulb);
+      warm.color.set(L.pt);warm.intensity=1.7;
+      glow.style.background='radial-gradient(circle,rgba('+L.halo+',.65) 0%,rgba('+L.halo+',.28) 38%,rgba('+L.halo+',0) 70%)';
+    }else{
+      matGlow.color.set(0x6b6458);matBulb.color.set(0x7a7264);warm.intensity=0;
+    }
+    var bs=document.querySelectorAll('.lb');
+    for(var k=0;k<bs.length;k++)bs[k].classList.toggle('on',bs[k].getAttribute('data-l')===mode);
+    glow.style.opacity=lightOn?1:0;
   }
 
   // ---------- Boyut / render ----------
@@ -400,7 +413,8 @@
   $('dist').oninput=function(){$('distO').textContent=parseFloat(this.value).toFixed(1)+' m';if(mode==='photo')placePhoto();};
   $('diam').oninput=function(){$('diamO').textContent=this.value+' cm';applyScale();};
   $('drop').oninput=function(){$('dropO').textContent=this.value+' cm';dropM=parseFloat(this.value)/100;build();};
-  $('btnLight').onclick=function(){setLight(!lightOn);};
+  var lbs=document.querySelectorAll('.lb');
+  for(var q=0;q<lbs.length;q++){lbs[q].onclick=function(){setLight(this.getAttribute('data-l'));};}
   window.addEventListener('resize',resize);
 
   // ---------- Döngü ----------
@@ -425,7 +439,7 @@
     }else glow.style.opacity=0;
   }
 
-  build();resize();placePhoto();setLight(false);renderer.setAnimationLoop(loop);
+  build();resize();placePhoto();setLight('off');renderer.setAnimationLoop(loop);
 })();
 </script>
 </body>
