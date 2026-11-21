@@ -33,13 +33,13 @@
   input[type=number]{width:70px;padding:6px;border-radius:8px;border:1px solid var(--line);background:#2a241d;color:var(--txt);font:inherit}
   #cross{position:absolute;left:50%;top:50%;width:28px;height:28px;margin:-14px 0 0 -14px;border:2px solid #fff;border-radius:50%;display:none;pointer-events:none;box-shadow:0 0 0 1px rgba(0,0,0,.5)}
   #cross::after{content:"";position:absolute;left:50%;top:50%;width:4px;height:4px;margin:-2px;background:#fff;border-radius:50%}
-  #btnExit{display:none}
+  #btnExit,#btnLock{display:none}
   .xr,.xr body,.xr #app,.xr #stage{background:transparent!important}
   .xr #bg,.xr #vid{display:none!important}
   .xr #cross{display:block}
   .xr #panel{background:rgba(20,17,15,.75);max-height:34%}
   .xr .tabs,.xr .note,.xr #photoCtl,.xr #liveCtl{display:none!important}
-  .xr #btnExit{display:inline-block}
+  .xr #btnExit,.xr #btnLock{display:inline-block}
 </style>
 </head>
 <body>
@@ -70,12 +70,12 @@
     <div id="liveCtl" class="hide">
       <div class="row"><label for="ceil">Tavan yüksekliği</label><input id="ceil" type="number" min="2.2" max="5" step="0.1" value="2.6"><span style="color:var(--mut);font-size:13px">m</span></div>
       <div class="btns"><button class="btn pri" id="btnXR">Gerçek AR'ı başlat (Android)</button><button class="btn" id="btnStart">Basit kamera modu</button></div>
-      <div class="note" id="liveMsg">Gerçek AR telefonun hareketini takip eder: yaklaştıkça avize büyür. Çıkan halkayı tavana tutup dokun. Basit mod sadece dönüşü izler, yaklaşınca avize büyümez.</div>
+      <div class="note" id="liveMsg">Gerçek AR telefonun hareketini takip eder: yaklaştıkça avize büyür. Çıkan halkayı tavana tut, avize halkayı takip eder; uygun yerde Sabitle'ye bas. Basit mod sadece dönüşü izler, yaklaşınca avize büyümez.</div>
     </div>
 
     <div class="row"><label for="diam">Toplam çap</label><input id="diam" type="range" min="80" max="170" step="1" value="130"><output id="diamO">130 cm</output></div>
     <div class="row"><label for="drop">Zincir boyu</label><input id="drop" type="range" min="25" max="120" step="1" value="50"><output id="dropO">50 cm</output></div>
-    <div class="btns"><button class="btn" id="btnLight">Işık: Kapalı</button><button class="btn pri" id="btnExit">AR'dan çık</button></div>
+    <div class="btns"><button class="btn" id="btnLight">Işık: Kapalı</button><button class="btn pri" id="btnLock">Sabitle</button><button class="btn" id="btnExit">AR'dan çık</button></div>
     <div class="note">Bu demodaki avize, gönderdiğin render görsellerine bakılarak yaklaşık ölçülerle kurulmuş örnek bir modeldir. Gerçek 3D dosyası gelince birebir değişir.</div>
   </div>
 </div>
@@ -268,34 +268,73 @@
 
   // ---------- Gerçek AR (WebXR, Android Chrome) ----------
   var xrOn=false,xrSession=null,hitSource=null,viewerSpace=null,xrFloor=true,lastHit=null;
+  var xrLocked=false,lockPending=false,xrAnchor=null,xrTok=0,aimOK=false;
   var _p=new THREE.Vector3(),_d=new THREE.Vector3();
   function xrPose(){
     var c=renderer.xr.getCamera(camera);c.updateMatrixWorld(true);
     _p.setFromMatrixPosition(c.matrixWorld);
     _d.set(0,0,-1).transformDirection(c.matrixWorld);
   }
-  function xrFrame(frame){
-    lastHit=null;
-    var ref=renderer.xr.getReferenceSpace();
-    if(!hitSource||!ref)return;
-    var hits=frame.getHitTestResults(hitSource);
-    if(!hits.length)return;
-    var pose=hits[0].getPose(ref);
-    if(!pose)return;
+  // Ekran ortasındaki nişangahın tavanda gösterdiği nokta (algılanan tavan ya da girilen yükseklik)
+  function aimPoint(){
     xrPose();
-    var hp=pose.transform.position;
-    if(hp.y>_p.y+0.4)lastHit=new THREE.Vector3(hp.x,hp.y,hp.z); // sadece yukarıdaki yüzeyler (tavan)
-  }
-  function xrPlace(){
-    xrPose();
-    if(lastHit){anchor.copy(lastHit);hint.textContent='Yerleşti (tavan algılandı). Yaklaşıp gezebilirsin.';return;}
+    if(lastHit){anchor.copy(lastHit);return true;}
     var ceil=parseFloat($('ceil').value)||2.6;
     var planeY=xrFloor?ceil:(ceil-1.4); // 'local' modunda başlangıç yüksekliği ~1,4 m varsayılır
-    if(_d.y<0.08){hint.textContent='Halkayı biraz daha tavana doğru çevirip dokun.';return;}
+    if(_d.y<0.08)return false;
     var t=(planeY-_p.y)/_d.y;
-    if(t<0.3||t>15){hint.textContent='Tavan yüksekliğini kontrol et, avize ulaşılamayan bir yere düştü.';return;}
+    if(t<0.3||t>15)return false;
     anchor.copy(_p).addScaledVector(_d,t);
-    hint.textContent='Yerleşti (tavan yüksekliği varsayımıyla). Yaklaşıp gezebilirsin.';
+    return true;
+  }
+  function setLockUI(){
+    $('btnLock').textContent=xrLocked?'Yeniden yerleştir':'Sabitle';
+    hint.textContent=xrLocked?'Sabitlendi. Yaklaşıp gezebilirsin.':'Halkayı tavana tut, avize halkayı takip eder. Uygun yerde "Sabitle"ye bas.';
+  }
+  function xrUnlock(){
+    xrLocked=false;xrTok++;
+    if(xrAnchor&&xrAnchor.delete){try{xrAnchor.delete();}catch(e){}}
+    xrAnchor=null;setLockUI();
+  }
+  function xrToggle(){if(xrLocked)xrUnlock();else lockPending=true;}
+  function xrFrame(frame){
+    var ref=renderer.xr.getReferenceSpace();
+    lastHit=null;
+    if(hitSource&&ref){
+      var hits=frame.getHitTestResults(hitSource);
+      if(hits.length){
+        var pose=hits[0].getPose(ref);
+        if(pose){
+          xrPose();
+          var hp=pose.transform.position;
+          if(hp.y>_p.y+0.4)lastHit=new THREE.Vector3(hp.x,hp.y,hp.z); // sadece yukarıdaki yüzeyler (tavan)
+        }
+      }
+    }
+    if(!xrLocked){
+      aimOK=aimPoint();
+      if(chand)chand.visible=aimOK;
+      if(lockPending){
+        lockPending=false;
+        if(aimOK){
+          xrLocked=true;var tok=++xrTok;
+          if(frame.createAnchor&&ref){
+            try{
+              frame.createAnchor(new XRRigidTransform({x:anchor.x,y:anchor.y,z:anchor.z},{x:0,y:0,z:0,w:1}),ref)
+                .then(function(a){if(tok===xrTok&&xrLocked)xrAnchor=a;else if(a&&a.delete)a.delete();})
+                .catch(function(){});
+            }catch(e){}
+          }
+          setLockUI();
+        }else{hint.textContent='Halkayı tavana doğru çevirip tekrar bas.';}
+      }
+    }else{
+      if(chand)chand.visible=true;
+      if(xrAnchor&&ref){
+        var pz=frame.getPose(xrAnchor.anchorSpace,ref);
+        if(pz)anchor.set(pz.transform.position.x,pz.transform.position.y,pz.transform.position.z);
+      }
+    }
   }
   async function startXR(){
     var msg=$('liveMsg');
@@ -304,7 +343,7 @@
       var ok=await navigator.xr.isSessionSupported('immersive-ar');
       if(!ok)throw new Error('Bu telefonda gerçek AR desteklenmiyor ya da "Google Play Hizmetleri AR" yüklü değil.');
       stopLive();
-      var s=await navigator.xr.requestSession('immersive-ar',{optionalFeatures:['local-floor','hit-test','dom-overlay'],domOverlay:{root:$('app')}});
+      var s=await navigator.xr.requestSession('immersive-ar',{optionalFeatures:['local-floor','hit-test','dom-overlay','anchors'],domOverlay:{root:$('app')}});
       xrSession=s;
       var type='local-floor';
       try{await s.requestReferenceSpace('local-floor');}catch(e){type='local';}
@@ -313,19 +352,20 @@
       renderer.xr.setReferenceSpaceType(type);
       await renderer.xr.setSession(s);
       try{viewerSpace=await s.requestReferenceSpace('viewer');hitSource=await s.requestHitTestSource({space:viewerSpace});}catch(e){hitSource=null;}
-      s.addEventListener('select',xrPlace);
+      s.addEventListener('select',xrToggle);
       s.addEventListener('end',onXREnd);
       xrOn=true;mode='live';
       document.documentElement.classList.add('xr');
-      anchor.set(0,0,-60);
-      hint.textContent='Ortadaki halkayı tavana tut ve dokun.';
+      anchor.set(0,0,-60);xrLocked=false;lockPending=false;xrAnchor=null;
+      setLockUI();
     }catch(err){
       xrOn=false;
       msg.textContent='Gerçek AR açılamadı: '+(err&&err.message?err.message:err);
     }
   }
   function onXREnd(){
-    xrOn=false;xrSession=null;hitSource=null;viewerSpace=null;
+    xrOn=false;xrSession=null;hitSource=null;viewerSpace=null;xrLocked=false;lockPending=false;xrAnchor=null;
+    if(chand)chand.visible=true;
     renderer.xr.enabled=false;
     document.documentElement.classList.remove('xr');
     camera.position.set(0,0,0);camera.quaternion.set(0,0,0,1);
@@ -333,6 +373,7 @@
     setTimeout(resize,60);
   }
   $('btnXR').onclick=startXR;
+  $('btnLock').onclick=xrToggle;
   $('btnExit').onclick=function(){if(xrSession)xrSession.end();};
   $('panel').addEventListener('beforexrselect',function(e){e.preventDefault();});
 
